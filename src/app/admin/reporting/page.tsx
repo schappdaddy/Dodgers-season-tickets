@@ -150,7 +150,7 @@ export default function AdminReportingPage() {
         <div className="bg-white rounded-2xl border shadow-sm">
           <div className="p-5 border-b">
             <h2 className="font-semibold text-zinc-900">Recovery by Buyer</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">Paid recovery requests grouped by name</p>
+            <p className="text-xs text-zinc-500 mt-0.5">All paid requests grouped by name · recovery + personal</p>
           </div>
           <div className="divide-y">
             {data.byFriend.map((r: any) => (
