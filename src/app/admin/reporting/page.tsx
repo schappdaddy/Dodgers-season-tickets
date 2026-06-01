@@ -126,19 +126,28 @@ export default function AdminReportingPage() {
         <div className="bg-white rounded-2xl border shadow-sm">
           <div className="p-5 border-b flex items-center justify-between">
             <div>
-              <h2 className="font-semibold text-zinc-900">Games You Kept</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">{keptGames.length} games · {money(keptCost)} total cost</p>
+              <h2 className="font-semibold text-zinc-900">Personal Games</h2>
+              <p className="text-xs text-zinc-500 mt-0.5">{keptGames.length} games · {money(keptCost)} total cost · not counted toward goal</p>
             </div>
             <span className="text-sm font-semibold text-purple-600">{money(keptCost / keptGames.length)}/game avg</span>
           </div>
           <div className="divide-y">
-            {keptGames.map((g: any) => (
+           {keptGames.map((g: any) => (
               <div key={g.id} className="flex items-center justify-between px-5 py-3">
                 <div>
-                  <div className="text-sm font-medium text-zinc-800">vs {g.opponent}</div>
-                  <div className="text-xs text-zinc-400">{formatDate(g.game_datetime)}</div>
+                  <div className="text-sm font-medium text-zinc-800">
+                    vs {g.games?.opponent || "Unknown"}
+                  </div>
+                  <div className="text-xs text-zinc-400">
+                    {g.games?.game_datetime ? formatDate(g.games.game_datetime) : ""}
+                    {g.friend_name && g.friend_name !== "Marketplace" && (
+                      <span className="ml-2 text-purple-500">{g.friend_name}</span>
+                    )}
+                  </div>
                 </div>
-                <span className="text-sm text-zinc-600">{money(g.purchase_cost)}</span>
+                <span className="text-sm text-zinc-600">
+                  {money(g.amount_due || g.games?.purchase_cost)}
+                </span>
               </div>
             ))}
           </div>
