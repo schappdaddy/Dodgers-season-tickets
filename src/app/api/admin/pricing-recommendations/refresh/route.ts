@@ -13,38 +13,17 @@ async function getAIPricingRecommendation(game: any) {
     timeZone: "America/Los_Angeles",
   });
 
-  const prompt = `You are an expert ticket pricing analyst for Dodger Stadium season ticket holders.
-
-I need a specific pricing recommendation for these tickets:
-- Game: Los Angeles Dodgers vs ${game.opponent}
-- Date: ${gameDate} (${days} days away)
-- Seats: ${game.seat_info || "Section 128LG Row L Seats 5-6"}
-- Section: 128LG (Loge level) - PREMIUM seats commanding higher prices than upper deck or bleachers
+  const prompt = `Ticket pricing analyst for Dodger Stadium. Give me a price recommendation for:
+- Dodgers vs ${game.opponent}, ${gameDate}, ${days} days away
+- Section 128LG Loge level (premium seats, 20-30% above upper deck)
 - My cost: $${game.purchase_cost || "unknown"} for 2 tickets
-- My tier: ${game.tier}
-- My floor price: $${game.floor_price || "not set"}/ticket
-- SeatGeek seller fee: 10%
+- Tier: ${game.tier}, Floor: $${game.floor_price || "110"}/ticket
+- SeatGeek takes 10% seller fee
 
-Please web search for current Dodger Stadium Loge section ticket prices for Dodgers vs ${game.opponent} on ${gameDate}, the Dodgers current team form and win streak, and any demand signals for this specific matchup.
+Web search current Loge ticket prices for this game and Dodgers recent form.
 
-Respond ONLY with a valid JSON object, no markdown, no backticks, no explanation outside the JSON:
-{
-  "recommended_price": 170,
-  "price_low": 150,
-  "price_high": 195,
-  "confidence": "high",
-  "action": "List now at $170/ea — strong demand expected",
-  "reasoning": "2-3 sentence explanation here",
-  "factors": {
-    "team_form": "brief note",
-    "opponent_demand": "brief note",
-    "supply": "brief note",
-    "timing": "brief note",
-    "seat_premium": "Loge 128LG commands 20-30% premium over upper deck"
-  },
-  "market_avg": null,
-  "market_listings": null
-}`;
+Reply ONLY with JSON, no markdown:
+{"recommended_price":170,"price_low":150,"price_high":195,"confidence":"high","action":"one sentence action","reasoning":"2 sentences max","factors":{"team_form":"brief","opponent_demand":"brief","supply":"brief","timing":"brief","seat_premium":"brief"},"market_avg":null,"market_listings":null}`;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
