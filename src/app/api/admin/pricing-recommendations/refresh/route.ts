@@ -73,7 +73,6 @@ Respond ONLY with a valid JSON object, no markdown, no backticks, no explanation
 
   if (data.error) throw new Error(`Claude error: ${JSON.stringify(data.error)}`);
 
-  // Extract text from response — may include tool use blocks
   const textBlocks = (data.content || [])
     .filter((item: any) => item.type === "text")
     .map((item: any) => item.text)
@@ -81,23 +80,25 @@ Respond ONLY with a valid JSON object, no markdown, no backticks, no explanation
 
   if (!textBlocks) throw new Error(`No text in response. Content: ${JSON.stringify(data.content)}`);
 
-  // Find JSON in response
   const jsonMatch = textBlocks.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error(`No JSON found in: ${textBlocks.slice(0, 200)}`);
 
   return JSON.parse(jsonMatch[0]);
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ message: "ANTHROPIC_API_KEY not configured in environment variables" }, { status: 500 });
+    return NextResponse.json({ message: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
   }
+
+  const body = await req.json().catch(() => ({}));
+  const gameId = body.gameId || null;
 
   const now = new Date();
   const cutoff = new Date(now.getTime() + 45 * 24 * 60 * 60 * 1000);
 
-  const { data: games, error: gErr } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("games")
     .select("id, opponent, game_datetime, tier, disposition, purchase_cost, suggested_price, floor_price, seat_info")
     .eq("disposition", "sell")
@@ -105,22 +106,24 @@ export async function POST() {
     .lte("game_datetime", cutoff.toISOString())
     .order("game_datetime", { ascending: true });
 
-  if (gErr) return NextResponse.json({ message: gErr.message }, { status: 500 });
+  if (gameId) {
+    const { data: games, error: gErr } = await supabaseAdmin
+      .from("games")
+      .select("id, opponent, game_datetime, tier, disposition, purchase_cost, suggested_price, floor_price, seat_info")
+      .eq("id", gameId)
+      .single();
 
-  if (!games || games.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, message: "No upcoming sell games found" });
-  }
+    if (gErr || !games) {
+      return NextResponse.json({ message: gErr?.message || "Game not found" }, { status: 500 });
+    }
 
-  const results = [];
-
-  for (const game of games) {
     try {
-      const rec = await getAIPricingRecommendation(game);
+      const rec = await getAIPricingRecommendation(games);
 
       const { error: upsertErr } = await supabaseAdmin
         .from("pricing_recommendations")
         .upsert({
-          game_id: game.id,
+          game_id: games.id,
           recommended_price: rec.recommended_price,
           price_low: rec.price_low,
           price_high: rec.price_high,
@@ -135,26 +138,28 @@ export async function POST() {
         }, { onConflict: "game_id" });
 
       if (upsertErr) {
-        results.push({ gameId: game.id, opponent: game.opponent, error: `Upsert failed: ${upsertErr.message}` });
-      } else {
-        results.push({ gameId: game.id, opponent: game.opponent, price: rec.recommended_price, confidence: rec.confidence });
+        return NextResponse.json({ ok: false, error: upsertErr.message });
       }
 
-      await new Promise(r => setTimeout(r, 1500));
+      return NextResponse.json({
+        ok: true,
+        gameId: games.id,
+        opponent: games.opponent,
+        price: rec.recommended_price,
+        confidence: rec.confidence,
+      });
 
     } catch (err: any) {
-      results.push({ gameId: game.id, opponent: game.opponent, error: err.message });
+      return NextResponse.json({ ok: false, gameId: games.id, opponent: games.opponent, error: err.message });
     }
   }
 
-  const successes = results.filter(r => !r.error).length;
-  const failures = results.filter(r => r.error);
+  // No gameId — return list of upcoming sell games for the dashboard to iterate
+  const { data: games, error: gErr } = await query;
+  if (gErr) return NextResponse.json({ message: gErr.message }, { status: 500 });
 
   return NextResponse.json({
-    ok: successes > 0,
-    processed: games.length,
-    successes,
-    failures: failures.length,
-    results,
+    ok: true,
+    games: (games || []).map((g: any) => ({ id: g.id, opponent: g.opponent })),
   });
 }
