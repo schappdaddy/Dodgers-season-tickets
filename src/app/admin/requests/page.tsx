@@ -116,6 +116,12 @@ export default function AdminRequestsPage() {
                   Mark Tickets Sent
                 </button>
                 <button
+                  onClick={() => { setEditPaidId(r.id); setEditPaidAmount(r.amount_paid ? String(r.amount_paid) : ""); }}
+                  disabled={r.status !== "paid" && r.status !== "tickets_sent"}
+                  className="text-xs px-3 py-2 border rounded-xl text-zinc-600 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Edit Payment
+                </button>
+                <button
                   onClick={() => post("/api/admin/requests/cancel-release", { requestId: r.id, gameId: r.game_id })}
                   disabled={!game || (game.status !== "pending" && game.status !== "reserved")}
                   className="text-xs px-3 py-2 bg-red-50 border border-red-200 text-red-600 rounded-xl hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -132,6 +138,31 @@ export default function AdminRequestsPage() {
             </div>
           );
         })}
+        {editPaidId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <h3 className="font-semibold mb-1">Edit Payment Amount</h3>
+            <p className="text-sm text-zinc-500 mb-4">Correct the amount received via Venmo</p>
+            <label className="text-sm font-medium text-zinc-700">Amount paid</label>
+            <input
+              type="number" step="0.01"
+              className="mt-1 w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={editPaidAmount} onChange={e => setEditPaidAmount(e.target.value)} />
+            <div className="flex justify-end gap-3 mt-4">
+              <button onClick={() => setEditPaidId(null)} className="px-4 py-2 text-sm border rounded-xl hover:bg-zinc-50">Cancel</button>
+              <button onClick={async () => {
+                await post("/api/admin/requests/mark-paid", {
+                  requestId: editPaidId,
+                  amountPaid: editPaidAmount ? Number(editPaidAmount) : null,
+                });
+                setEditPaidId(null);
+              }} className="px-4 py-2 text-sm bg-[#005A9C] text-white rounded-xl hover:bg-[#0C2340]">
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
 
       {markPaidId && (
