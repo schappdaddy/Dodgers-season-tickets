@@ -54,16 +54,28 @@ export async function GET() {
     (sum: number, r: any) => sum + (Number(r.amount_paid) || 0), 0
   );
 
-  // Games kept (disposition = keep) — track how many you attended
-  const { data: keptGames, error: kErr } = await supabaseAdmin
-    .from("games")
-    .select("id, opponent, game_datetime, purchase_cost")
-    .eq("disposition", "keep");
+// Personal games — requests marked as personal purpose
+  const { data: personalGames, error: pgErr } = await supabaseAdmin
+    .from("requests")
+    .select(`
+      id,
+      friend_name,
+      amount_paid,
+      amount_due,
+      games!requests_game_id_fkey (
+        id,
+        opponent,
+        game_datetime,
+        purchase_cost
+      )
+    `)
+    .eq("purpose", "personal")
+    .in("status", ["paid", "tickets_sent", "requested", "confirmed"]);
 
-  if (kErr) return NextResponse.json({ message: kErr.message }, { status: 500 });
+  if (pgErr) return NextResponse.json({ message: pgErr.message }, { status: 500 });
 
-  const keptCost = (keptGames || []).reduce(
-    (sum, g: any) => sum + (Number(g.purchase_cost) || 0), 0
+  const keptCost = (personalGames || []).reduce(
+    (sum, g: any) => sum + (Number(g.amount_due) || Number(g.games?.purchase_cost) || 0), 0
   );
 
   // By friend breakdown — ALL paid requests (recovery + personal)
@@ -83,8 +95,8 @@ export async function GET() {
     moneyPending,
     recoveryTotal,      // counts toward goal
     personalTotal,      // does NOT count toward goal
-    keptGames: keptGames || [],
-    keptCount: (keptGames || []).length,
+    keptGames: personalGames || [],
+    keptCount: (personalGames || []).length,
     keptCost,
     byFriend: byFriendSorted,
   });
