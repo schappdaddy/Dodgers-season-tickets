@@ -110,18 +110,18 @@ export default function AdminDashboard() {
     setRecsLoading(false);
   }
 
- async function refreshRecommendations() {
+async function refreshRecommendations() {
     setRecsRefreshing(true);
     setRecsError("");
     try {
-      // First get the list of games to process
+      // Step 1: get list of games to process
       const listRes = await fetch("/api/admin/pricing-recommendations/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
       const listBody = await listRes.json();
-      const gamesList = listBody?.games || [];
+      const gamesList: { id: string; opponent: string }[] = listBody?.games || [];
 
       if (gamesList.length === 0) {
         setRecsError("No upcoming sell games found");
@@ -129,18 +129,23 @@ export default function AdminDashboard() {
         return;
       }
 
-      // Process each game one at a time
-      for (const game of gamesList) {
-        const res = await fetch("/api/admin/pricing-recommendations/refresh", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ gameId: game.id }),
-        });
-        const body = await res.json();
-        if (!body.ok) {
-          console.warn(`Failed for ${game.opponent}:`, body.error);
+      // Step 2: process each game individually
+      for (let i = 0; i < gamesList.length; i++) {
+        const game = gamesList[i];
+        try {
+          const res = await fetch("/api/admin/pricing-recommendations/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ gameId: game.id }),
+          });
+          const body = await res.json();
+          if (!body.ok) {
+            console.warn(`Failed for ${game.opponent}:`, body.error);
+          }
+        } catch (err) {
+          console.warn(`Error processing ${game.opponent}:`, err);
         }
-        // Update recommendations after each game so UI updates progressively
+        // Reload after each game so recommendations appear progressively
         await loadRecommendations();
       }
     } catch (e: any) {
