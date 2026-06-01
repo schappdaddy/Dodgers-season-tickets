@@ -132,24 +132,36 @@ async function refreshRecommendations() {
       // Step 2: process each game individually
       for (let i = 0; i < gamesList.length; i++) {
         const game = gamesList[i];
-        try {
-          const res = await fetch("/api/admin/pricing-recommendations/refresh", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ gameId: game.id }),
-          });
-          const body = await res.json();
-          if (!body.ok) {
-            console.warn(`Failed for ${game.opponent}:`, body.error);
+        let attempts = 0;
+        let success = false;
+        while (attempts < 3 && !success) {
+          try {
+            const res = await fetch("/api/admin/pricing-recommendations/refresh", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ gameId: game.id }),
+            });
+            const body = await res.json();
+            if (body.ok) {
+              success = true;
+            } else if (body.error?.includes("rate_limit")) {
+              // Wait 30 more seconds and retry
+              attempts++;
+              await new Promise(r => setTimeout(r, 30000));
+            } else {
+              console.warn(`Failed for ${game.opponent}:`, body.error);
+              break;
+            }
+          } catch (err) {
+            console.warn(`Error processing ${game.opponent}:`, err);
+            break;
           }
-        } catch (err) {
-          console.warn(`Error processing ${game.opponent}:`, err);
         }
         // Reload after each game so recommendations appear progressively
         await loadRecommendations();
         // Wait 15 seconds between calls to avoid rate limits
         if (i < gamesList.length - 1) {
-          await new Promise(r => setTimeout(r, 15000));
+          await new Promise(r => setTimeout(r, 30000));
         }
       }
     } catch (e: any) {
