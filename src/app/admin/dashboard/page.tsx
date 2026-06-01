@@ -147,6 +147,10 @@ async function refreshRecommendations() {
         }
         // Reload after each game so recommendations appear progressively
         await loadRecommendations();
+        // Wait 15 seconds between calls to avoid rate limits
+        if (i < gamesList.length - 1) {
+          await new Promise(r => setTimeout(r, 15000));
+        }
       }
     } catch (e: any) {
       setRecsError(e?.message || "Failed to refresh recommendations");
