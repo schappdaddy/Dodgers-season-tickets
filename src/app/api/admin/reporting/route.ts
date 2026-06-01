@@ -66,9 +66,9 @@ export async function GET() {
     (sum, g: any) => sum + (Number(g.purchase_cost) || 0), 0
   );
 
-  // By friend breakdown — only recovery purpose
+  // By friend breakdown — ALL paid requests (recovery + personal)
   const byFriend: Record<string, number> = {};
-  for (const r of recoveryRows) {
+  for (const r of paidRows) {
     const name = String(r.friend_name || "").trim() || "(unknown)";
     byFriend[name] = (byFriend[name] || 0) + (Number(r.amount_paid) || 0);
   }
