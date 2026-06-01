@@ -139,7 +139,13 @@ export default function FriendsPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0C2340] to-[#005A9C]">
-      <div className="px-4 pt-10 pb-8 text-center">
+      {/* Discreet admin link */}
+      <div className="flex justify-end px-4 pt-3">
+        <a href="/login" className="text-xs text-white/30 hover:text-white/60 transition-colors">
+          Admin
+        </a>
+      </div>
+      <div className="px-4 pt-6 pb-8 text-center">
         <div className="flex items-center justify-center gap-3 mb-2">
           <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center">
             <span className="text-[#0C2340] font-bold text-sm">LA</span>
