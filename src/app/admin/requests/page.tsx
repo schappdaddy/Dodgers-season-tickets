@@ -20,6 +20,8 @@ export default function AdminRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [markPaidId, setMarkPaidId] = useState<string | null>(null);
   const [markPaidAmount, setMarkPaidAmount] = useState("");
+  const [editPaidId, setEditPaidId] = useState<string | null>(null);
+  const [editPaidAmount, setEditPaidAmount] = useState("");
 
   async function load() {
     setLoading(true);
