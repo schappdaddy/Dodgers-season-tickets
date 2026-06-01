@@ -38,16 +38,37 @@ export async function GET() {
     return PAID_STATUSES.has(status) && r.amount_paid != null;
   });
 
-  const recoveryTotal = paidRows
-    .filter((r: any) => String(r.purpose || "").toLowerCase() === "recovery")
-    .reduce((sum: number, r: any) => sum + (Number(r.amount_paid) || 0), 0);
+  // Recovery = sold online or to a friend — counts toward 60% goal
+  const recoveryRows = paidRows.filter((r: any) =>
+    String(r.purpose || "").toLowerCase() === "recovery"
+  );
+  const recoveryTotal = recoveryRows.reduce(
+    (sum: number, r: any) => sum + (Number(r.amount_paid) || 0), 0
+  );
 
-  const personalTotal = paidRows
-    .filter((r: any) => String(r.purpose || "").toLowerCase() === "personal")
-    .reduce((sum: number, r: any) => sum + (Number(r.amount_paid) || 0), 0);
+  // Personal = games you attended yourself — does NOT count toward goal
+  const personalRows = paidRows.filter((r: any) =>
+    String(r.purpose || "").toLowerCase() === "personal"
+  );
+  const personalTotal = personalRows.reduce(
+    (sum: number, r: any) => sum + (Number(r.amount_paid) || 0), 0
+  );
 
+  // Games kept (disposition = keep) — track how many you attended
+  const { data: keptGames, error: kErr } = await supabaseAdmin
+    .from("games")
+    .select("id, opponent, game_datetime, purchase_cost")
+    .eq("disposition", "keep");
+
+  if (kErr) return NextResponse.json({ message: kErr.message }, { status: 500 });
+
+  const keptCost = (keptGames || []).reduce(
+    (sum, g: any) => sum + (Number(g.purchase_cost) || 0), 0
+  );
+
+  // By friend breakdown — only recovery purpose
   const byFriend: Record<string, number> = {};
-  for (const r of paidRows) {
+  for (const r of recoveryRows) {
     const name = String(r.friend_name || "").trim() || "(unknown)";
     byFriend[name] = (byFriend[name] || 0) + (Number(r.amount_paid) || 0);
   }
@@ -60,8 +81,11 @@ export async function GET() {
     ok: true,
     moneyStillAvailable,
     moneyPending,
-    recoveryTotal,
-    personalTotal,
+    recoveryTotal,      // counts toward goal
+    personalTotal,      // does NOT count toward goal
+    keptGames: keptGames || [],
+    keptCount: (keptGames || []).length,
+    keptCost,
     byFriend: byFriendSorted,
   });
 }
