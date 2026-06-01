@@ -110,14 +110,39 @@ export default function AdminDashboard() {
     setRecsLoading(false);
   }
 
-  async function refreshRecommendations() {
+ async function refreshRecommendations() {
     setRecsRefreshing(true);
     setRecsError("");
     try {
-      const res = await fetch("/api/admin/pricing-recommendations/refresh", { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.message || "Refresh failed");
-      await loadRecommendations();
+      // First get the list of games to process
+      const listRes = await fetch("/api/admin/pricing-recommendations/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const listBody = await listRes.json();
+      const gamesList = listBody?.games || [];
+
+      if (gamesList.length === 0) {
+        setRecsError("No upcoming sell games found");
+        setRecsRefreshing(false);
+        return;
+      }
+
+      // Process each game one at a time
+      for (const game of gamesList) {
+        const res = await fetch("/api/admin/pricing-recommendations/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gameId: game.id }),
+        });
+        const body = await res.json();
+        if (!body.ok) {
+          console.warn(`Failed for ${game.opponent}:`, body.error);
+        }
+        // Update recommendations after each game so UI updates progressively
+        await loadRecommendations();
+      }
     } catch (e: any) {
       setRecsError(e?.message || "Failed to refresh recommendations");
     }
