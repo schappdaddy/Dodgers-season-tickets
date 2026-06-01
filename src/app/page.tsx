@@ -97,6 +97,8 @@ export default function FriendsPage() {
     return c;
   }, [games]);
 
+const now = new Date();
+
   const friendGames = useMemo(() => {
     const q = query.trim().toLowerCase();
     return games
@@ -107,9 +109,17 @@ export default function FriendsPage() {
         const matchStatus = statusFilter === "all" || g.status === statusFilter;
         const matchPromo = !promoOnly || !!g.promotion_title;
         const show = g.disposition !== "keep";
-        return matchQ && matchStatus && matchPromo && show;
+        const upcoming = new Date(g.game_datetime) >= now;
+        return matchQ && matchStatus && matchPromo && show && upcoming;
       });
   }, [games, query, statusFilter, promoOnly]);
+
+  const pastGames = useMemo(() => {
+    return games
+      .slice()
+      .sort((a, b) => new Date(b.game_datetime).getTime() - new Date(a.game_datetime).getTime())
+      .filter(g => new Date(g.game_datetime) < now && g.disposition !== "keep");
+  }, [games]);
 
   async function handleRequest(game: Game, requester: { name: string; contact: string; message: string }) {
     const res = await fetch("/api/request-game", {
@@ -260,7 +270,33 @@ export default function FriendsPage() {
                   </div>
                 );
               })}
-              {friendGames.length === 0 && <div className="text-center py-12 text-zinc-400 text-sm">No games match your filters.</div>}
+             {friendGames.length === 0 && <div className="text-center py-12 text-zinc-400 text-sm">No games match your filters.</div>}
+
+              {/* Past games */}
+              {pastGames.length > 0 && (
+                <div className="mt-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="h-px flex-1 bg-zinc-200" />
+                    <span className="text-xs text-zinc-400 font-medium uppercase tracking-wide">Past Games</span>
+                    <div className="h-px flex-1 bg-zinc-200" />
+                  </div>
+                  <div className="grid gap-2">
+                    {pastGames.map(g => (
+                      <div key={g.id} className="bg-white/60 rounded-2xl border border-zinc-200 p-3 opacity-60">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-zinc-500">Dodgers vs {g.opponent}</div>
+                            <div className="text-xs text-zinc-400 flex items-center gap-1 mt-0.5">
+                              <Calendar className="h-3 w-3" />{formatLA(g.game_datetime)}
+                            </div>
+                          </div>
+                          <span className="text-xs text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full">Past</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
