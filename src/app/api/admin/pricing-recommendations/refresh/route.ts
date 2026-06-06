@@ -27,7 +27,6 @@ async function getSeatGeekEventData(game: any): Promise<{ eventId: string | null
     const year = gameDate.getFullYear();
     const eventUrl = `https://seatgeek.com/los-angeles-dodgers-tickets/${month}-${day}-${year}-los-angeles-california-dodger-stadium/mlb/${eventId}?quantity=2`;
 
-    // Get detailed event stats
     const eventRes = await fetch(
       `https://api.seatgeek.com/2/events/${eventId}?client_id=${SEATGEEK_CLIENT_ID}`
     );
@@ -92,7 +91,7 @@ DO NOT use $${stats.lowest_price} as your floor — that is an upper deck/bleach
   }
 }
 
-async function getAIPricingRecommendation(game: any, marketData: string, stats: any, apiKey: string) {
+async function getAIPricingRecommendation(game: any, marketData: string, stats: any, apiKey: string, hoursUntilGame: number) {
   const days = Math.ceil(
     (new Date(game.game_datetime).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
   );
@@ -102,8 +101,19 @@ async function getAIPricingRecommendation(game: any, marketData: string, stats: 
     timeZone: "America/Los_Angeles",
   });
 
-  const urgency = days <= 0
-    ? "GAME IS TODAY OR ALREADY STARTED — tickets expire worthless very soon, price at Loge Low immediately"
+  const gameAlreadyOver = hoursUntilGame < -3;
+  const gameInProgress = hoursUntilGame < 0 && !gameAlreadyOver;
+  const gameStartingSoon = hoursUntilGame >= 0 && hoursUntilGame <= 2;
+  const smartPricingWindow = hoursUntilGame <= 7 && hoursUntilGame > 2;
+
+  const urgency = gameAlreadyOver
+    ? "GAME IS OVER — tickets are completely worthless, do not recommend listing"
+    : gameInProgress
+    ? "GAME IS IN PROGRESS — tickets expire in 1-2 hours, list at any price above $0 immediately"
+    : gameStartingSoon
+    ? "GAME STARTS IN UNDER 2 HOURS — maximum urgency, list at absolute floor price immediately"
+    : smartPricingWindow
+    ? `GAME IS IN ${Math.round(hoursUntilGame)} HOURS — SWITCH TO SEATGEEK SMART PRICING NOW. Smart pricing automatically adjusts in real time as the market drops. Manual pricing is too slow at this stage. Enable smart pricing immediately.`
     : days === 1
     ? "GAME IS TOMORROW — price at Loge Low, must sell today"
     : days <= 3
@@ -129,6 +139,7 @@ async function getAIPricingRecommendation(game: any, marketData: string, stats: 
   const prompt = `You are a ticket pricing analyst for Dodger Stadium season ticket holders.
 
 Game: Dodgers vs ${game.opponent} | ${gameDate}
+Hours until game: ${hoursUntilGame.toFixed(1)}
 Opponent tier: ${opponentTier}
 Urgency: ${urgency}
 Seats: Section 128LG Loge Row L Seats 5-6 (premium infield Loge)
@@ -265,6 +276,80 @@ export async function POST(req: Request) {
   }
 
   try {
+    const now = new Date();
+    const gameTime = new Date(game.game_datetime);
+    const hoursUntilGame = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    console.log("Hours until game:", hoursUntilGame.toFixed(1));
+
+    // Game is already over
+    if (hoursUntilGame < -3) {
+      await supabaseAdmin
+        .from("pricing_recommendations")
+        .upsert({
+          game_id: game.id,
+          recommended_price: 0,
+          price_low: 0,
+          price_high: 0,
+          confidence: "high",
+          reasoning: "Game has already ended. Tickets are worthless.",
+          action: "Game is over — do not list these tickets.",
+          factors: {
+            team_form: "N/A",
+            opponent_demand: "N/A",
+            supply: "N/A",
+            timing: "Game ended more than 3 hours ago",
+            seat_premium: "N/A — tickets have no value",
+          },
+          data_source: "ai_only",
+          market_avg: null,
+          market_listings: null,
+          generated_at: new Date().toISOString(),
+        }, { onConflict: "game_id" });
+
+      return NextResponse.json({
+        ok: true,
+        gameId: game.id,
+        opponent: game.opponent,
+        price: 0,
+        message: "Game is over — tickets are worthless",
+      });
+    }
+
+    // Smart pricing window — 2 to 7 hours before game
+    if (hoursUntilGame <= 7 && hoursUntilGame > 2) {
+      await supabaseAdmin
+        .from("pricing_recommendations")
+        .upsert({
+          game_id: game.id,
+          recommended_price: -1,
+          price_low: -1,
+          price_high: -1,
+          confidence: "high",
+          reasoning: `Game is ${Math.round(hoursUntilGame)} hours away. Switch to SeatGeek smart pricing immediately — it adjusts in real time as the market drops and will find the clearing price faster than manual pricing.`,
+          action: "Enable SeatGeek Smart Pricing NOW — go to your SeatGeek seller dashboard and switch this listing to smart pricing immediately.",
+          factors: {
+            team_form: "N/A at this stage",
+            opponent_demand: "N/A — urgency overrides all",
+            supply: "Market dropping rapidly as game approaches",
+            timing: `${Math.round(hoursUntilGame)} hours until game — smart pricing window`,
+            seat_premium: "Irrelevant — price to sell at any Loge-reasonable price",
+          },
+          data_source: "ai_only",
+          market_avg: null,
+          market_listings: null,
+          generated_at: new Date().toISOString(),
+        }, { onConflict: "game_id" });
+
+      return NextResponse.json({
+        ok: true,
+        gameId: game.id,
+        opponent: game.opponent,
+        price: -1,
+        message: "Smart pricing window — switch to SeatGeek smart pricing",
+      });
+    }
+
     // Step 1: Get SeatGeek event data + real market stats
     const { eventId, marketData, stats } = await getSeatGeekEventData(game);
     const hadRealData = !!marketData;
@@ -273,7 +358,7 @@ export async function POST(req: Request) {
     console.log("Had real market data:", hadRealData);
 
     // Step 2: Get AI recommendation with real market data
-    const { rec, usedModel } = await getAIPricingRecommendation(game, marketData, stats, apiKey);
+    const { rec, usedModel } = await getAIPricingRecommendation(game, marketData, stats, apiKey, hoursUntilGame);
 
     const dataSource = hadRealData
       ? (usedModel.includes("haiku") ? "ai_haiku" : "seatgeek_ai")
