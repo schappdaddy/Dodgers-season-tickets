@@ -3,10 +3,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const SEATGEEK_CLIENT_ID = process.env.SEATGEEK_CLIENT_ID;
-const SCRAPINGBEE_API_KEY = process.env.SCRAPINGBEE_API_KEY;
 
-async function getSeatGeekEventUrl(game: any): Promise<{ eventId: string | null; eventUrl: string | null }> {
-  if (!SEATGEEK_CLIENT_ID) return { eventId: null, eventUrl: null };
+async function getSeatGeekEventData(game: any): Promise<{ eventId: string | null; eventUrl: string | null; marketData: string }> {
+  if (!SEATGEEK_CLIENT_ID) return { eventId: null, eventUrl: null, marketData: "" };
 
   try {
     const gameDate = new Date(game.game_datetime);
@@ -15,109 +14,61 @@ async function getSeatGeekEventUrl(game: any): Promise<{ eventId: string | null;
     const url = `https://api.seatgeek.com/2/events?performers.slug=los-angeles-dodgers&datetime_local.gte=${dateStr}T00:00:00&datetime_local.lte=${dateStr}T23:59:59&client_id=${SEATGEEK_CLIENT_ID}&per_page=5`;
 
     const res = await fetch(url);
-    if (!res.ok) return { eventId: null, eventUrl: null };
+    if (!res.ok) return { eventId: null, eventUrl: null, marketData: "" };
 
     const body = await res.json();
     const events = body?.events || [];
-    if (events.length === 0) return { eventId: null, eventUrl: null };
+    if (events.length === 0) return { eventId: null, eventUrl: null, marketData: "" };
 
     const event = events[0];
+    const eventId = String(event.id);
     const month = String(gameDate.getMonth() + 1);
     const day = String(gameDate.getDate());
     const year = gameDate.getFullYear();
+    const eventUrl = `https://seatgeek.com/los-angeles-dodgers-tickets/${month}-${day}-${year}-los-angeles-california-dodger-stadium/mlb/${eventId}?quantity=2`;
 
-    return {
-      eventId: String(event.id),
-      eventUrl: `https://seatgeek.com/los-angeles-dodgers-tickets/${month}-${day}-${year}-los-angeles-california-dodger-stadium/mlb/${event.id}?quantity=2`,
-    };
-  } catch {
-    return { eventId: null, eventUrl: null };
-  }
-}
+    // Get detailed event stats
+    const eventRes = await fetch(
+      `https://api.seatgeek.com/2/events/${eventId}?client_id=${SEATGEEK_CLIENT_ID}`
+    );
 
-async function scrapeWithScrapingBee(url: string): Promise<string> {
-  if (!SCRAPINGBEE_API_KEY) return "";
+    let marketData = "";
+    if (eventRes.ok) {
+      const eventData = await eventRes.json();
+      const stats = eventData?.stats;
 
-  try {
-    console.log("ScrapingBee fetching URL:", url);
+      if (stats) {
+        marketData = `
+SeatGeek live market data for this event:
+- Average ticket price (all sections): $${stats.average_price || "unknown"}
+- Lowest ticket price (all sections): $${stats.lowest_price || "unknown"}
+- Highest ticket price: $${stats.highest_price || "unknown"}
+- Total listings: ${stats.listing_count || "unknown"}
 
-    const scrapeUrl = `https://app.scrapingbee.com/api/v1/?api_key=${SCRAPINGBEE_API_KEY}&url=${encodeURIComponent(url)}&render_js=true&wait=3000&extract_rules=${encodeURIComponent(JSON.stringify({
-      "page_text": "body"
-    }))}`;
+Important context: These are stadium-wide averages across ALL sections.
+Loge sections (128LG, 130LG etc.) typically price:
+- 20-40% ABOVE stadium average for premium/rivalry games
+- 10-20% ABOVE stadium average for average games  
+- At or near stadium average for weak opponents (Angels, Rays, Rockies etc.)
 
-    const res = await fetch(scrapeUrl);
-    console.log("ScrapingBee response status:", res.status);
+Use the lowest_price as your floor — never go below that or you won't sell.
+Use average_price as your baseline, then adjust up or down based on section premium and opponent demand.
+        `.trim();
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("ScrapingBee error body:", errText.slice(0, 500));
-      return "";
+        console.log("SeatGeek market data found:", {
+          avg: stats.average_price,
+          low: stats.lowest_price,
+          high: stats.highest_price,
+          listings: stats.listing_count,
+        });
+      }
     }
 
-    const body = await res.json();
-    console.log("ScrapingBee response keys:", Object.keys(body));
-    console.log("ScrapingBee page_text length:", body?.page_text?.length || 0);
-    console.log("ScrapingBee page_text preview:", body?.page_text?.slice(0, 200) || "empty");
-
-    return body?.page_text || "";
+    return { eventId, eventUrl, marketData };
   } catch (e) {
-    console.error("ScrapingBee fetch error:", e);
-    return "";
+    console.error("SeatGeek API error:", e);
+    return { eventId: null, eventUrl: null, marketData: "" };
   }
-}
-
-async function extractPricesFromPage(pageText: string, game: any, apiKey: string): Promise<string> {
-  if (!pageText) return "";
-
-  // Truncate to avoid token limits — first 8000 chars usually has pricing data
-  const truncated = pageText.slice(0, 8000);
-
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 500,
-      messages: [{
-        role: "user",
-        content: `Extract ticket prices from this SeatGeek page content for Dodgers vs ${game.opponent}. 
-        
-Find prices for Loge sections (128LG, 130LG, 126LG, 122LG, 124LG, 132LG, 134LG) and any general loge pricing.
-
-Page content:
-${truncated}
-
-Reply ONLY with JSON, no markdown:
-{
-  "sections": {
-    "128LG": <lowest price or null>,
-    "130LG": <lowest price or null>,
-    "126LG": <lowest price or null>,
-    "122LG": <lowest price or null>,
-    "loge_avg": <average loge price or null>,
-    "loge_low": <lowest loge price or null>,
-    "loge_high": <highest loge price or null>
-  },
-  "total_loge_listings": <number or null>,
-  "data_found": <true or false>
-}`
-      }],
-    }),
-  });
-
-  if (!response.ok) return "";
-
-  const data = await response.json();
-  const text = (data.content || [])
-    .filter((i: any) => i.type === "text")
-    .map((i: any) => i.text)
-    .join("\n");
-
-  return text;
 }
 
 async function getAIPricingRecommendation(game: any, marketData: string, apiKey: string) {
@@ -131,35 +82,37 @@ async function getAIPricingRecommendation(game: any, marketData: string, apiKey:
   });
 
   const urgency = days <= 0
-    ? "GAME IS TODAY OR ALREADY STARTED — tickets expire worthless very soon, price extremely aggressively to move"
+    ? "GAME IS TODAY OR ALREADY STARTED — tickets expire worthless very soon, price extremely aggressively, $0 is the alternative"
     : days === 1
     ? "GAME IS TOMORROW — drop 20-30% below comparable listings, must sell today"
     : days <= 3
-    ? "GAME IN 2-3 DAYS — price at or below lowest comparable listing"
+    ? "GAME IN 2-3 DAYS — price at or below lowest comparable listing, urgency is high"
     : days <= 7
-    ? "GAME THIS WEEK — price competitively, don't hold out"
-    : "More than 7 days out — can afford to price near market";
+    ? "GAME THIS WEEK — price competitively at or slightly below market to guarantee sale"
+    : "More than 7 days out — can price near or slightly above market";
 
   const prompt = `You are a ticket pricing analyst for Dodger Stadium season ticket holders.
 
 Game: Dodgers vs ${game.opponent} | ${gameDate}
 Urgency: ${urgency}
-Seats: Section 128LG Loge Row L
+Seats: Section 128LG Loge Row L Seats 5-6
 My cost: $${game.purchase_cost || "unknown"} for 2 tickets
-SeatGeek takes 10% seller fee
+SeatGeek takes 10% seller fee from my proceeds
 
-REAL SCRAPED MARKET DATA FROM SEATGEEK:
-${marketData || "No market data found — be very conservative, assume heavy competition"}
+${marketData ? `REAL SEATGEEK MARKET DATA:\n${marketData}` : "No live market data — use conservative estimates and web search for current prices."}
 
 STRICT PRICING RULES:
-1. If market data shows Loge prices, recommend AT or BELOW the lowest comparable section
-2. Weak opponents (Angels, Rays, Rockies, Brewers, Cardinals, Reds, Mariners, Royals, Pirates, Nationals) = price to SELL not maximize
-3. Follow the urgency level above strictly
-4. If no market data = assume $100-130 for weak opponents, $150-180 for average, $180-220 for premium
-5. An unsold ticket = $0. Always better to sell at $80 than nothing
+1. Use the SeatGeek lowest_price as your absolute floor — never recommend below that
+2. Use average_price as baseline, adjust for section premium and opponent
+3. Weak opponents (Angels, Rays, Rockies, Brewers, Cardinals, Reds, Mariners, Royals, Pirates, Nationals) = price at or BELOW stadium average, do not add Loge premium for these games
+4. Premium opponents (Giants, Padres, Phillies, Red Sox, Yankees) = add 20-30% Loge premium above average
+5. Follow urgency strictly — game day = price to sell immediately
+6. An unsold ticket = $0. Always better to sell at cost than nothing
+
+${!marketData ? "Web search for current Dodgers vs " + game.opponent + " ticket prices on SeatGeek to find real market data." : ""}
 
 Reply ONLY with JSON, no markdown:
-{"recommended_price":<number>,"price_low":<number>,"price_high":<number>,"confidence":"high"|"medium"|"low","action":"<specific: exact price, when to drop and by how much>","reasoning":"<cite actual prices from market data if available>","factors":{"team_form":"<brief>","opponent_demand":"<honest assessment>","supply":"<actual listings found>","timing":"<urgency>","seat_premium":"<honest loge premium>"},"market_avg":<number|null>,"market_listings":<number|null>}`;
+{"recommended_price":<number per ticket>,"price_low":<floor per ticket>,"price_high":<aggressive per ticket>,"confidence":"high"|"medium"|"low","action":"<specific: exact price to list at and when/how much to drop>","reasoning":"<cite actual market data prices you used>","factors":{"team_form":"<Dodgers current record/form>","opponent_demand":"<honest demand assessment>","supply":"<listings found and price range>","timing":"<urgency assessment>","seat_premium":"<honest Loge premium for this specific matchup>"},"market_avg":<number|null>,"market_listings":<number|null>}`;
 
   const models = ["claude-sonnet-4-5", "claude-haiku-4-5-20251001"];
   let data: any = null;
@@ -179,13 +132,18 @@ Reply ONLY with JSON, no markdown:
         body: JSON.stringify({
           model,
           max_tokens: 800,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{ role: "user", content: prompt }],
         }),
       });
 
       if (response.ok) {
         const json = await response.json();
-        if (!json.error) { data = json; usedModel = model; break; }
+        if (!json.error) {
+          data = json;
+          usedModel = model;
+          break;
+        }
         lastError = JSON.stringify(json.error);
         break;
       }
@@ -226,14 +184,15 @@ export async function POST(req: Request) {
   if (!apiKey) {
     return NextResponse.json({ message: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
   }
-  // Debug — check which keys are present
+
   console.log("ANTHROPIC key present:", !!apiKey);
-  console.log("SCRAPINGBEE key present:", !!SCRAPINGBEE_API_KEY);
+  console.log("SCRAPINGBEE key present:", !!process.env.SCRAPINGBEE_API_KEY);
   console.log("SEATGEEK key present:", !!SEATGEEK_CLIENT_ID);
 
   const body = await req.json().catch(() => ({}));
   const gameId = body.gameId || null;
 
+  // No gameId — return list of upcoming sell games
   if (!gameId) {
     const now = new Date();
     const cutoff = new Date(now.getTime() + 45 * 24 * 60 * 60 * 1000);
@@ -254,6 +213,7 @@ export async function POST(req: Request) {
     });
   }
 
+  // Get specific game
   const { data: game, error: gErr } = await supabaseAdmin
     .from("games")
     .select("id, opponent, game_datetime, tier, disposition, purchase_cost, suggested_price, floor_price, seat_info")
@@ -265,27 +225,21 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Step 1: Get SeatGeek event URL
-    const { eventUrl } = await getSeatGeekEventUrl(game);
+    // Step 1: Get SeatGeek event data + real market stats
+    const { eventId, eventUrl, marketData } = await getSeatGeekEventData(game);
+    const hadRealData = !!marketData;
 
-    // Step 2: Scrape real prices using ScrapingBee
-    let pageText = "";
-    let marketData = "";
+    console.log("Event ID found:", eventId);
+    console.log("Had real market data:", hadRealData);
 
-    if (eventUrl && SCRAPINGBEE_API_KEY) {
-      pageText = await scrapeWithScrapingBee(eventUrl);
-      if (pageText) {
-        marketData = await extractPricesFromPage(pageText, game, apiKey);
-      }
-    }
-
-    // Step 3: Get AI recommendation with real data
+    // Step 2: Get AI recommendation with real market data
     const { rec, usedModel } = await getAIPricingRecommendation(game, marketData, apiKey);
 
-    const dataSource = pageText
+    const dataSource = hadRealData
       ? (usedModel.includes("haiku") ? "ai_haiku" : "seatgeek_ai")
       : (usedModel.includes("haiku") ? "ai_haiku" : "ai_only");
 
+    // Step 3: Save to Supabase
     const { error: upsertErr } = await supabaseAdmin
       .from("pricing_recommendations")
       .upsert({
@@ -314,8 +268,8 @@ export async function POST(req: Request) {
       price: rec.recommended_price,
       confidence: rec.confidence,
       dataSource,
-      hadPageData: !!pageText,
-      hadMarketData: !!marketData,
+      hadMarketData: hadRealData,
+      eventId,
     });
 
   } catch (err: any) {
