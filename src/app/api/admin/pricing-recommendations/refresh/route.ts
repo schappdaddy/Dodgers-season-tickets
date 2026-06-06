@@ -217,6 +217,10 @@ export async function POST(req: Request) {
   if (!apiKey) {
     return NextResponse.json({ message: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
   }
+  // Debug — check which keys are present
+  console.log("ANTHROPIC key present:", !!apiKey);
+  console.log("SCRAPINGBEE key present:", !!SCRAPINGBEE_API_KEY);
+  console.log("SEATGEEK key present:", !!SEATGEEK_CLIENT_ID);
 
   const body = await req.json().catch(() => ({}));
   const gameId = body.gameId || null;
