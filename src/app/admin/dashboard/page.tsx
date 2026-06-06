@@ -76,15 +76,159 @@ function DataSourceBadge({ source }: { source: string }) {
   );
 }
 
+function GamePricingRow({ g, rec, onRefreshed }: {
+  g: Game;
+  rec: Recommendation | null;
+  onRefreshed: () => void;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [error, setError] = useState("");
+
+  const days = daysUntil(g.game_datetime);
+  const tierColors: Record<string, string> = {
+    premium: "bg-red-100 text-red-700",
+    mid: "bg-amber-100 text-amber-700",
+    low: "bg-zinc-100 text-zinc-600",
+  };
+
+  async function refreshThis() {
+    setRefreshing(true);
+    setError("");
+    try {
+      const res = await fetch("/api/admin/pricing-recommendations/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gameId: g.id }),
+      });
+      const body = await res.json();
+      if (!body.ok) {
+        setError(body.error || "Failed to get recommendation");
+      } else {
+        onRefreshed();
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed");
+    }
+    setRefreshing(false);
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-4 p-4 hover:bg-zinc-50 transition-colors">
+        {/* Days */}
+        <div className="w-10 text-center flex-shrink-0">
+          <div className={`text-sm font-bold ${days <= 0 ? "text-red-600" : days <= 3 ? "text-red-600" : days <= 7 ? "text-amber-600" : "text-zinc-700"}`}>
+            {days <= 0 ? "0d" : `${days}d`}
+          </div>
+        </div>
+
+        {/* Game info */}
+        <button onClick={() => rec && setExpanded(!expanded)} className="flex-1 min-w-0 text-left">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-zinc-800">vs {g.opponent}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${tierColors[g.tier]}`}>{g.tier}</span>
+            {rec && <DataSourceBadge source={rec.data_source} />}
+          </div>
+          <div className="text-xs text-zinc-400 mt-0.5">{formatDate(g.game_datetime)}</div>
+        </button>
+
+        {/* Price recommendation */}
+        <div className="text-right flex-shrink-0 min-w-[140px]">
+          {rec ? (
+            <>
+              <div className="text-sm font-bold text-[#005A9C]">${rec.recommended_price}/ea</div>
+              <div className="text-xs text-zinc-400">${rec.price_low}–${rec.price_high} range</div>
+              <ConfidenceBadge confidence={rec.confidence} />
+            </>
+          ) : (
+            <div className="text-xs text-zinc-300">No recommendation yet</div>
+          )}
+        </div>
+
+        {/* Per-game refresh button */}
+        <button
+          onClick={refreshThis}
+          disabled={refreshing}
+          title="Refresh AI pricing for this game"
+          className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1.5 border rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40 transition-colors">
+          <RefreshCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "…" : "Refresh"}
+        </button>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="px-4 pb-2 text-xs text-red-500">{error}</div>
+      )}
+
+      {/* Expanded details */}
+      {expanded && rec && (
+        <div className="px-4 pb-4 border-t bg-zinc-50">
+          <div className="pt-3 grid gap-3">
+            {/* Action */}
+            <div className="bg-[#005A9C]/10 border border-[#005A9C]/20 rounded-xl p-3">
+              <div className="text-xs font-semibold text-[#005A9C] uppercase tracking-wide mb-1">Recommended Action</div>
+              <div className="text-sm font-medium text-zinc-800">{rec.action}</div>
+            </div>
+
+            {/* Reasoning */}
+            <div className="bg-white rounded-xl border p-3">
+              <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-1">Analysis</div>
+              <div className="text-sm text-zinc-700">{rec.reasoning}</div>
+            </div>
+
+            {/* Factors grid */}
+            {rec.factors && (
+              <div className="grid sm:grid-cols-2 gap-2">
+                {Object.entries(rec.factors).map(([key, value]) => (
+                  <div key={key} className="bg-white rounded-xl border p-3">
+                    <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-1">
+                      {key.replace(/_/g, " ")}
+                    </div>
+                    <div className="text-xs text-zinc-600">{value as string}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Market data */}
+            {rec.market_avg && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">
+                Live market: {rec.market_listings} listings · avg ${rec.market_avg}/ea for comparable Loge sections
+              </div>
+            )}
+
+            {/* Price breakdown */}
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="bg-white rounded-xl border p-3">
+                <div className="text-xs text-zinc-400 mb-1">Conservative</div>
+                <div className="text-lg font-bold text-zinc-700">${rec.price_low}</div>
+                <div className="text-xs text-zinc-400">Net {money(rec.price_low * 2 * 0.9)}</div>
+              </div>
+              <div className="bg-[#005A9C] rounded-xl p-3">
+                <div className="text-xs text-blue-200 mb-1">Recommended</div>
+                <div className="text-lg font-bold text-white">${rec.recommended_price}</div>
+                <div className="text-xs text-blue-200">Net {money(rec.recommended_price * 2 * 0.9)}</div>
+              </div>
+              <div className="bg-white rounded-xl border p-3">
+                <div className="text-xs text-zinc-400 mb-1">Aggressive</div>
+                <div className="text-lg font-bold text-zinc-700">${rec.price_high}</div>
+                <div className="text-xs text-zinc-400">Net {money(rec.price_high * 2 * 0.9)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
-  const [recsLoading, setRecsLoading] = useState(false);
-  const [recsRefreshing, setRecsRefreshing] = useState(false);
-  const [recsError, setRecsError] = useState("");
   const [reporting, setReporting] = useState<any>(null);
-  const [expandedRec, setExpandedRec] = useState<string | null>(null);
 
   async function loadGames() {
     setLoading(true);
@@ -101,73 +245,9 @@ export default function AdminDashboard() {
   }
 
   async function loadRecommendations() {
-    setRecsLoading(true);
-    try {
-      const res = await fetch("/api/admin/pricing-recommendations", { cache: "no-store" });
-      const body = await res.json();
-      setRecommendations(Array.isArray(body?.recommendations) ? body.recommendations : []);
-    } catch {}
-    setRecsLoading(false);
-  }
-
-async function refreshRecommendations() {
-    setRecsRefreshing(true);
-    setRecsError("");
-    try {
-      // Step 1: get list of games to process
-      const listRes = await fetch("/api/admin/pricing-recommendations/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const listBody = await listRes.json();
-      const gamesList: { id: string; opponent: string }[] = listBody?.games || [];
-
-      if (gamesList.length === 0) {
-        setRecsError("No upcoming sell games found");
-        setRecsRefreshing(false);
-        return;
-      }
-
-      // Step 2: process each game individually
-      for (let i = 0; i < gamesList.length; i++) {
-        const game = gamesList[i];
-        let attempts = 0;
-        let success = false;
-        while (attempts < 3 && !success) {
-          try {
-            const res = await fetch("/api/admin/pricing-recommendations/refresh", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ gameId: game.id }),
-            });
-            const body = await res.json();
-            if (body.ok) {
-              success = true;
-            } else if (body.error?.includes("rate_limit")) {
-              // Wait 30 more seconds and retry
-              attempts++;
-              await new Promise(r => setTimeout(r, 30000));
-            } else {
-              console.warn(`Failed for ${game.opponent}:`, body.error);
-              break;
-            }
-          } catch (err) {
-            console.warn(`Error processing ${game.opponent}:`, err);
-            break;
-          }
-        }
-        // Reload after each game so recommendations appear progressively
-        await loadRecommendations();
-        // Wait 15 seconds between calls to avoid rate limits
-        if (i < gamesList.length - 1) {
-          await new Promise(r => setTimeout(r, 30000));
-        }
-      }
-    } catch (e: any) {
-      setRecsError(e?.message || "Failed to refresh recommendations");
-    }
-    setRecsRefreshing(false);
+    const res = await fetch("/api/admin/pricing-recommendations", { cache: "no-store" });
+    const body = await res.json();
+    setRecommendations(Array.isArray(body?.recommendations) ? body.recommendations : []);
   }
 
   useEffect(() => {
@@ -221,7 +301,6 @@ async function refreshRecommendations() {
       .slice(0, 8);
   }, [games]);
 
-  // Map recommendations by game_id for easy lookup
   const recsByGameId = useMemo(() => {
     const map: Record<string, Recommendation> = {};
     for (const r of recommendations) map[r.game_id] = r;
@@ -359,144 +438,24 @@ async function refreshRecommendations() {
               </span>
             </div>
             <p className="text-xs text-zinc-500 mt-0.5">
-              {lastUpdated ? `Last updated ${lastUpdated}` : "No recommendations yet — click refresh to generate"}
+              {lastUpdated ? `Last updated ${lastUpdated}` : "No recommendations yet — click Refresh on any game"}
             </p>
           </div>
-          <button
-            onClick={refreshRecommendations}
-            disabled={recsRefreshing}
-            className="flex items-center gap-1.5 text-sm bg-[#005A9C] text-white px-3 py-2 rounded-xl hover:bg-[#0C2340] disabled:opacity-50 transition-colors">
-            <RefreshCw className={`h-3.5 w-3.5 ${recsRefreshing ? "animate-spin" : ""}`} />
-            {recsRefreshing ? "Analyzing…" : "Refresh AI Pricing"}
-          </button>
         </div>
 
-        {recsError && (
-          <div className="p-4 bg-red-50 border-b text-sm text-red-600">{recsError}</div>
-        )}
-
-        {recsRefreshing && (
-          <div className="p-6 text-center">
-            <div className="text-sm text-zinc-500 mb-1">Researching current market conditions…</div>
-            <div className="text-xs text-zinc-400">Web searching Loge seat prices, team form, and demand signals. This takes 30-60 seconds.</div>
-          </div>
-        )}
-
-        {!recsRefreshing && (
-          <div className="divide-y">
-            {recsLoading && <div className="p-5 text-sm text-zinc-400 text-center">Loading recommendations…</div>}
-
-            {!recsLoading && upcomingSell.length === 0 && (
-              <div className="p-5 text-sm text-zinc-400 text-center">No upcoming sell games in next 45 days</div>
-            )}
-
-            {!recsLoading && upcomingSell.map(g => {
-              const rec = recsByGameId[g.id];
-              const days = daysUntil(g.game_datetime);
-              const isExpanded = expandedRec === g.id;
-              const tierColors: Record<string, string> = {
-                premium: "bg-red-100 text-red-700",
-                mid: "bg-amber-100 text-amber-700",
-                low: "bg-zinc-100 text-zinc-600"
-              };
-
-              return (
-                <div key={g.id}>
-                  <button
-                    onClick={() => setExpandedRec(isExpanded ? null : g.id)}
-                    className="w-full flex items-center gap-4 p-4 text-left hover:bg-zinc-50 transition-colors">
-                    {/* Days */}
-                    <div className="w-10 text-center flex-shrink-0">
-                      <div className={`text-sm font-bold ${days <= 3 ? "text-red-600" : days <= 7 ? "text-amber-600" : "text-zinc-700"}`}>{days}d</div>
-                    </div>
-
-                    {/* Game info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-zinc-800">vs {g.opponent}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${tierColors[g.tier]}`}>{g.tier}</span>
-                        {rec && <DataSourceBadge source={rec.data_source} />}
-                      </div>
-                      <div className="text-xs text-zinc-400 mt-0.5">{formatDate(g.game_datetime)}</div>
-                    </div>
-
-                    {/* Price recommendation */}
-                    <div className="text-right flex-shrink-0">
-                      {rec ? (
-                        <>
-                          <div className="text-sm font-bold text-[#005A9C]">${rec.recommended_price}/ea</div>
-                          <div className="text-xs text-zinc-400">${rec.price_low}–${rec.price_high} range</div>
-                          <ConfidenceBadge confidence={rec.confidence} />
-                        </>
-                      ) : (
-                        <div className="text-xs text-zinc-300">No recommendation yet</div>
-                      )}
-                    </div>
-                  </button>
-
-                  {/* Expanded details */}
-                  {isExpanded && rec && (
-                    <div className="px-4 pb-4 border-t bg-zinc-50">
-                      <div className="pt-3 grid gap-3">
-                        {/* Action */}
-                        <div className="bg-[#005A9C]/10 border border-[#005A9C]/20 rounded-xl p-3">
-                          <div className="text-xs font-semibold text-[#005A9C] uppercase tracking-wide mb-1">Recommended Action</div>
-                          <div className="text-sm font-medium text-zinc-800">{rec.action}</div>
-                        </div>
-
-                        {/* Reasoning */}
-                        <div className="bg-white rounded-xl border p-3">
-                          <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-1">Analysis</div>
-                          <div className="text-sm text-zinc-700">{rec.reasoning}</div>
-                        </div>
-
-                        {/* Factors grid */}
-                        {rec.factors && (
-                          <div className="grid sm:grid-cols-2 gap-2">
-                            {Object.entries(rec.factors).map(([key, value]) => (
-                              <div key={key} className="bg-white rounded-xl border p-3">
-                                <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-1">
-                                  {key.replace(/_/g, " ")}
-                                </div>
-                                <div className="text-xs text-zinc-600">{value as string}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Market data if available */}
-                        {rec.market_avg && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">
-                            Live market: {rec.market_listings} listings · avg ${rec.market_avg}/ea for comparable Loge sections
-                          </div>
-                        )}
-
-                        {/* Price breakdown */}
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          <div className="bg-white rounded-xl border p-3">
-                            <div className="text-xs text-zinc-400 mb-1">Conservative</div>
-                            <div className="text-lg font-bold text-zinc-700">${rec.price_low}</div>
-                            <div className="text-xs text-zinc-400">Est. net {money(rec.price_low * 2 * 0.9)}</div>
-                          </div>
-                          <div className="bg-[#005A9C] rounded-xl p-3">
-                            <div className="text-xs text-blue-200 mb-1">Recommended</div>
-                            <div className="text-lg font-bold text-white">${rec.recommended_price}</div>
-                            <div className="text-xs text-blue-200">Est. net {money(rec.recommended_price * 2 * 0.9)}</div>
-                          </div>
-                          <div className="bg-white rounded-xl border p-3">
-                            <div className="text-xs text-zinc-400 mb-1">Aggressive</div>
-                            <div className="text-lg font-bold text-zinc-700">${rec.price_high}</div>
-                            <div className="text-xs text-zinc-400">Est. net {money(rec.price_high * 2 * 0.9)}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <div className="divide-y">
+          {upcomingSell.length === 0 && (
+            <div className="p-5 text-sm text-zinc-400 text-center">No upcoming sell games in next 45 days</div>
+          )}
+          {upcomingSell.map(g => (
+            <GamePricingRow
+              key={g.id}
+              g={g}
+              rec={recsByGameId[g.id] || null}
+              onRefreshed={loadRecommendations}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Upcoming sell games quick view */}
@@ -514,7 +473,7 @@ async function refreshRecommendations() {
             const tierColors: Record<string, string> = {
               premium: "bg-red-100 text-red-700",
               mid: "bg-amber-100 text-amber-700",
-              low: "bg-zinc-100 text-zinc-600"
+              low: "bg-zinc-100 text-zinc-600",
             };
             return (
               <div key={g.id} className="flex items-center gap-4 p-4">
