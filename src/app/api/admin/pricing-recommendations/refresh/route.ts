@@ -39,17 +39,26 @@ async function scrapeWithScrapingBee(url: string): Promise<string> {
   if (!SCRAPINGBEE_API_KEY) return "";
 
   try {
+    console.log("ScrapingBee fetching URL:", url);
+
     const scrapeUrl = `https://app.scrapingbee.com/api/v1/?api_key=${SCRAPINGBEE_API_KEY}&url=${encodeURIComponent(url)}&render_js=true&wait=3000&extract_rules=${encodeURIComponent(JSON.stringify({
       "page_text": "body"
     }))}`;
 
     const res = await fetch(scrapeUrl);
+    console.log("ScrapingBee response status:", res.status);
+
     if (!res.ok) {
-      console.error("ScrapingBee error:", res.status, await res.text());
+      const errText = await res.text();
+      console.error("ScrapingBee error body:", errText.slice(0, 500));
       return "";
     }
 
     const body = await res.json();
+    console.log("ScrapingBee response keys:", Object.keys(body));
+    console.log("ScrapingBee page_text length:", body?.page_text?.length || 0);
+    console.log("ScrapingBee page_text preview:", body?.page_text?.slice(0, 200) || "empty");
+
     return body?.page_text || "";
   } catch (e) {
     console.error("ScrapingBee fetch error:", e);
