@@ -13,18 +13,50 @@ async function getAIPricingRecommendation(game: any) {
     timeZone: "America/Los_Angeles",
   });
 
-  const prompt = `Ticket pricing analyst for Dodger Stadium. Give me a price recommendation for:
-- Dodgers vs ${game.opponent}, ${gameDate}, ${days} days away
-- Section 128LG Loge level (premium seats, 20-30% above upper deck)
+  const prompt = `You are an expert ticket resale pricing analyst. I need an ACCURATE current market price for tickets I am trying to sell RIGHT NOW.
+
+CRITICAL CONTEXT:
+- Game: Los Angeles Dodgers vs ${game.opponent}
+- Date: ${gameDate}
+- Days until game: ${days} ${days === 0 ? "— GAME IS TODAY, possibly already started" : days < 0 ? "— GAME HAS PASSED" : ""}
+- My seats: Section 128LG Row L Seats 5-6 (Loge level, Dodger Stadium)
 - My cost: $${game.purchase_cost || "unknown"} for 2 tickets
-- Tier: ${game.tier}, Floor: $${game.floor_price || "110"}/ticket
-- SeatGeek takes 10% seller fee
+- SeatGeek takes 10% from my proceeds
 
-Web search current Loge ticket prices for this game and Dodgers recent form.
+PRICING REALITY RULES — follow these strictly:
+1. Loge seats ARE premium but only command a premium when there is ACTUAL DEMAND
+2. For weak opponents (Angels, Rays, Rockies, Brewers, Cardinals, Reds, Mariners, Royals, Pirates, Nationals) — demand is LOW, price to SELL not to maximize
+3. If the game is TODAY or within 2 days — prices drop 30-50% from face value, buyers have all the leverage
+4. If the game is within 7 days and tickets are unsold — price BELOW comparable listings to move fast
+5. Never recommend above what comparable Loge tickets are actually listed for right now
+6. A ticket that doesn't sell is worth $0 — always better to sell at $80 than not sell at all
 
-Reply ONLY with JSON, no markdown:
-{"recommended_price":170,"price_low":150,"price_high":195,"confidence":"high","action":"one sentence action","reasoning":"2 sentences max","factors":{"team_form":"brief","opponent_demand":"brief","supply":"brief","timing":"brief","seat_premium":"brief"},"market_avg":null,"market_listings":null}`;
+TASK: Web search RIGHT NOW for:
+1. "Dodgers ${game.opponent} ${gameDate} tickets seatgeek loge" — find actual current listings and prices
+2. "Dodgers ${game.opponent} ${gameDate} tickets stubhub section 128" — find comparable prices
+3. Current Dodgers record and recent form — winning teams sell better
+4. How many days until game and what that means for pricing urgency
 
+Based on ACTUAL current market prices you find, give me a realistic price I can sell at TODAY. If you find Loge tickets listed at $75-100, my recommended price should be AT or BELOW that, not above it.
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "recommended_price": <number — must reflect actual current market, not theoretical value>,
+  "price_low": <floor price — what to drop to if not selling in 24hrs>,
+  "price_high": <only list this high if market supports it>,
+  "confidence": "high" | "medium" | "low",
+  "action": "<specific action: exact price to list at and when to drop>",
+  "reasoning": "<2 sentences — cite actual prices you found in your search>",
+  "factors": {
+    "team_form": "<Dodgers current record and recent performance>",
+    "opponent_demand": "<honest assessment — is this a high or low demand opponent>",
+    "supply": "<how many listings did you find and at what prices>",
+    "timing": "<days until game and urgency level>",
+    "seat_premium": "<honest Loge premium assessment given current demand>"
+  },
+  "market_avg": <average price you found in search or null>,
+  "market_listings": <number of listings you found or null>
+}`;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
 
