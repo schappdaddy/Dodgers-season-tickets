@@ -4,8 +4,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const SEATGEEK_CLIENT_ID = process.env.SEATGEEK_CLIENT_ID;
 
-async function getSeatGeekEventData(game: any): Promise<{ eventId: string | null; eventUrl: string | null; marketData: string }> {
-  if (!SEATGEEK_CLIENT_ID) return { eventId: null, eventUrl: null, marketData: "" };
+async function getSeatGeekEventData(game: any): Promise<{ eventId: string | null; eventUrl: string | null; marketData: string; stats: any }> {
+  if (!SEATGEEK_CLIENT_ID) return { eventId: null, eventUrl: null, marketData: "", stats: null };
 
   try {
     const gameDate = new Date(game.game_datetime);
@@ -14,11 +14,11 @@ async function getSeatGeekEventData(game: any): Promise<{ eventId: string | null
     const url = `https://api.seatgeek.com/2/events?performers.slug=los-angeles-dodgers&datetime_local.gte=${dateStr}T00:00:00&datetime_local.lte=${dateStr}T23:59:59&client_id=${SEATGEEK_CLIENT_ID}&per_page=5`;
 
     const res = await fetch(url);
-    if (!res.ok) return { eventId: null, eventUrl: null, marketData: "" };
+    if (!res.ok) return { eventId: null, eventUrl: null, marketData: "", stats: null };
 
     const body = await res.json();
     const events = body?.events || [];
-    if (events.length === 0) return { eventId: null, eventUrl: null, marketData: "" };
+    if (events.length === 0) return { eventId: null, eventUrl: null, marketData: "", stats: null };
 
     const event = events[0];
     const eventId = String(event.id);
@@ -33,45 +33,66 @@ async function getSeatGeekEventData(game: any): Promise<{ eventId: string | null
     );
 
     let marketData = "";
+    let stats = null;
+
     if (eventRes.ok) {
       const eventData = await eventRes.json();
-      const stats = eventData?.stats;
+      stats = eventData?.stats;
 
       if (stats) {
+        const avg = stats.average_price || 100;
+        const logeEstLow = Math.round(avg * 1.8);
+        const logeEstMid = Math.round(avg * 2.2);
+        const logeEstHigh = Math.round(avg * 2.6);
+
         marketData = `
 SeatGeek live market data for this event:
-- Average ticket price (all sections): $${stats.average_price || "unknown"}
-- Lowest ticket price (all sections): $${stats.lowest_price || "unknown"}
-- Highest ticket price: $${stats.highest_price || "unknown"}
+- Stadium-wide average (ALL sections including cheap upper deck/bleachers): $${stats.average_price || "unknown"}
+- Stadium-wide lowest (likely upper deck or bleachers): $${stats.lowest_price || "unknown"}
+- Stadium-wide highest: $${stats.highest_price || "unknown"}
 - Total listings: ${stats.listing_count || "unknown"}
 
-Important context: These are stadium-wide averages across ALL sections.
-Loge sections (128LG, 130LG etc.) typically price:
-- 20-40% ABOVE stadium average for premium/rivalry games
-- 10-20% ABOVE stadium average for average games  
-- At or near stadium average for weak opponents (Angels, Rays, Rockies etc.)
+CRITICAL CONTEXT — DO NOT USE STADIUM AVERAGE AS YOUR BASELINE:
+The stadium-wide average includes hundreds of cheap upper deck, bleacher, and standing room tickets that sell for $30-80. These are NOT comparable to Loge seats.
 
-Use the lowest_price as your floor — never go below that or you won't sell.
-Use average_price as your baseline, then adjust up or down based on section premium and opponent demand.
+Dodger Stadium section hierarchy and typical price ranges:
+- Upper Reserved/Bleachers: $30-80 (cheapest, drags average down)
+- Field Level (outfield): $80-150
+- Loge Level (128LG, 130LG, 122LG etc.): $130-250 depending on game
+- Field Level (infield): $180-400
+- Premium/Club: $300+
+
+Section 128LG is LOGE INFIELD — one of the best Loge sections.
+Estimated Loge price range for this game based on market data:
+- Loge low estimate: ~$${logeEstLow}/ea
+- Loge mid estimate: ~$${logeEstMid}/ea
+- Loge high estimate: ~$${logeEstHigh}/ea
+
+PRICING RULE: Your recommendation MUST be in the $${logeEstLow}-$${logeEstHigh} range.
+DO NOT recommend below $${Math.round(avg * 1.5)} — that would be giving away premium Loge seats at upper deck prices.
+DO NOT use $${stats.lowest_price} as your floor — that is an upper deck/bleacher price, not a Loge floor.
         `.trim();
 
-        console.log("SeatGeek market data found:", {
+        console.log("SeatGeek market data:", {
           avg: stats.average_price,
           low: stats.lowest_price,
           high: stats.highest_price,
           listings: stats.listing_count,
+          logeEstLow,
+          logeEstMid,
+          logeEstHigh,
         });
       }
     }
 
-    return { eventId, eventUrl, marketData };
+    return { eventId, eventUrl, marketData, stats };
   } catch (e) {
     console.error("SeatGeek API error:", e);
-    return { eventId: null, eventUrl: null, marketData: "" };
+    return { eventId: null, eventUrl: null, marketData: "", stats: null };
   }
 }
 
-async function getAIPricingRecommendation(game: any, marketData: string, apiKey: string) {
+async function getAIPricingRecommendation(game: any, marketData: string, stats: any, apiKey: string) {
   const days = Math.ceil(
     (new Date(game.game_datetime).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
   );
@@ -82,37 +103,57 @@ async function getAIPricingRecommendation(game: any, marketData: string, apiKey:
   });
 
   const urgency = days <= 0
-    ? "GAME IS TODAY OR ALREADY STARTED — tickets expire worthless very soon, price extremely aggressively, $0 is the alternative"
+    ? "GAME IS TODAY OR ALREADY STARTED — tickets expire worthless very soon, price at Loge Low immediately"
     : days === 1
-    ? "GAME IS TOMORROW — drop 20-30% below comparable listings, must sell today"
+    ? "GAME IS TOMORROW — price at Loge Low, must sell today"
     : days <= 3
-    ? "GAME IN 2-3 DAYS — price at or below lowest comparable listing, urgency is high"
+    ? "GAME IN 2-3 DAYS — price at Loge Low to guarantee sale"
     : days <= 7
-    ? "GAME THIS WEEK — price competitively at or slightly below market to guarantee sale"
-    : "More than 7 days out — can price near or slightly above market";
+    ? "GAME THIS WEEK — price at Loge Mid, drop to Loge Low if unsold in 48hrs"
+    : "More than 7 days out — price at Loge Mid to High";
+
+  const avg = stats?.average_price || 100;
+  const logeEstLow = Math.round(avg * 1.8);
+  const logeEstMid = Math.round(avg * 2.2);
+  const logeEstHigh = Math.round(avg * 2.6);
+
+  const weakOpponents = ["Angels", "Rays", "Rockies", "Brewers", "Cardinals", "Reds", "Mariners", "Royals", "Pirates", "Nationals", "Athletics", "Tigers", "White Sox"];
+  const premiumOpponents = ["Giants", "Padres", "Phillies", "Red Sox", "Yankees", "Mets", "Cubs", "Astros"];
+  const isWeak = weakOpponents.some(o => game.opponent.includes(o));
+  const isPremium = premiumOpponents.some(o => game.opponent.includes(o));
+
+  const opponentTier = isPremium ? "PREMIUM — price at Loge High"
+    : isWeak ? "WEAK — price at Loge Low, no premium"
+    : "AVERAGE — price at Loge Mid";
 
   const prompt = `You are a ticket pricing analyst for Dodger Stadium season ticket holders.
 
 Game: Dodgers vs ${game.opponent} | ${gameDate}
+Opponent tier: ${opponentTier}
 Urgency: ${urgency}
-Seats: Section 128LG Loge Row L Seats 5-6
+Seats: Section 128LG Loge Row L Seats 5-6 (premium infield Loge)
 My cost: $${game.purchase_cost || "unknown"} for 2 tickets
-SeatGeek takes 10% seller fee from my proceeds
+SeatGeek takes 10% seller fee
 
-${marketData ? `REAL SEATGEEK MARKET DATA:\n${marketData}` : "No live market data — use conservative estimates and web search for current prices."}
+${marketData ? marketData : "No live market data — estimate Loge prices at $130-180 for weak opponents, $160-220 for average, $200-280 for premium."}
 
-STRICT PRICING RULES:
-1. Use the SeatGeek lowest_price as your absolute floor — never recommend below that
-2. Use average_price as baseline, adjust for section premium and opponent
-3. Weak opponents (Angels, Rays, Rockies, Brewers, Cardinals, Reds, Mariners, Royals, Pirates, Nationals) = price at or BELOW stadium average, do not add Loge premium for these games
-4. Premium opponents (Giants, Padres, Phillies, Red Sox, Yankees) = add 20-30% Loge premium above average
-5. Follow urgency strictly — game day = price to sell immediately
-6. An unsold ticket = $0. Always better to sell at cost than nothing
+YOUR TARGET PRICE BASED ON RULES:
+- Opponent tier (${isWeak ? "WEAK" : isPremium ? "PREMIUM" : "AVERAGE"}): ${isWeak ? `$${logeEstLow}/ea` : isPremium ? `$${logeEstHigh}/ea` : `$${logeEstMid}/ea`}
+- Urgency adjustment: ${days <= 3 ? "Price at LOW end of range" : days <= 7 ? "Price at MID end of range" : "Price at MID to HIGH end"}
+- Final target: ~$${isWeak ? logeEstLow : isPremium ? logeEstHigh : logeEstMid}/ea
 
-${!marketData ? "Web search for current Dodgers vs " + game.opponent + " ticket prices on SeatGeek to find real market data." : ""}
+STRICT RULES:
+1. Recommend within $${logeEstLow}-$${logeEstHigh} range ALWAYS
+2. Never go below $${Math.round(avg * 1.5)} — minimum Loge floor
+3. Never use stadium-wide lowest price as floor
+4. Weak opponent + urgent = Loge Low ($${logeEstLow})
+5. Premium opponent + time = Loge High ($${logeEstHigh})
+6. Unsold ticket = $0, always better to sell at Loge Low
+
+Web search for actual current Loge section prices for Dodgers vs ${game.opponent} on ${gameDate} to validate these estimates.
 
 Reply ONLY with JSON, no markdown:
-{"recommended_price":<number per ticket>,"price_low":<floor per ticket>,"price_high":<aggressive per ticket>,"confidence":"high"|"medium"|"low","action":"<specific: exact price to list at and when/how much to drop>","reasoning":"<cite actual market data prices you used>","factors":{"team_form":"<Dodgers current record/form>","opponent_demand":"<honest demand assessment>","supply":"<listings found and price range>","timing":"<urgency assessment>","seat_premium":"<honest Loge premium for this specific matchup>"},"market_avg":<number|null>,"market_listings":<number|null>}`;
+{"recommended_price":<number per ticket>,"price_low":<loge low floor>,"price_high":<loge high ceiling>,"confidence":"high"|"medium"|"low","action":"<specific: exact price, when and how much to drop>","reasoning":"<cite actual Loge prices found, explain why this price>","factors":{"team_form":"<Dodgers current record>","opponent_demand":"<honest demand + opponent record>","supply":"<actual Loge listings found and prices>","timing":"<urgency level>","seat_premium":"<Loge 128LG premium assessment for this specific game>"},"market_avg":<stadium avg or null>,"market_listings":<total listings or null>}`;
 
   const models = ["claude-sonnet-4-5", "claude-haiku-4-5-20251001"];
   let data: any = null;
@@ -186,7 +227,6 @@ export async function POST(req: Request) {
   }
 
   console.log("ANTHROPIC key present:", !!apiKey);
-  console.log("SCRAPINGBEE key present:", !!process.env.SCRAPINGBEE_API_KEY);
   console.log("SEATGEEK key present:", !!SEATGEEK_CLIENT_ID);
 
   const body = await req.json().catch(() => ({}));
@@ -226,14 +266,14 @@ export async function POST(req: Request) {
 
   try {
     // Step 1: Get SeatGeek event data + real market stats
-    const { eventId, eventUrl, marketData } = await getSeatGeekEventData(game);
+    const { eventId, marketData, stats } = await getSeatGeekEventData(game);
     const hadRealData = !!marketData;
 
     console.log("Event ID found:", eventId);
     console.log("Had real market data:", hadRealData);
 
     // Step 2: Get AI recommendation with real market data
-    const { rec, usedModel } = await getAIPricingRecommendation(game, marketData, apiKey);
+    const { rec, usedModel } = await getAIPricingRecommendation(game, marketData, stats, apiKey);
 
     const dataSource = hadRealData
       ? (usedModel.includes("haiku") ? "ai_haiku" : "seatgeek_ai")
